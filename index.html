@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#4CA05A">
+<title>ふく冷蔵庫 🐸</title>
+<style>
+  :root { --green:#4CA05A; --ink:#1F2A44; --bg:#FAF3E3; --card:#fff; --red:#c0392b; --sub:#786E5A; }
+  * { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+  body { font-family:"Hiragino Sans","Yu Gothic",Meiryo,sans-serif; background:var(--bg); color:var(--ink); padding-bottom:90px; }
+  header { background:var(--green); color:#fff; padding:14px 16px; display:flex; align-items:center; gap:10px; position:sticky; top:0; z-index:10; }
+  header h1 { font-size:18px; flex:1; }
+  header button { background:rgba(255,255,255,.2); border:none; color:#fff; border-radius:8px; padding:8px 12px; font-size:13px; }
+  .tabs { display:flex; background:#fff; border-bottom:2px solid var(--green); position:sticky; top:50px; z-index:9; }
+  .tabs button { flex:1; padding:12px 4px; border:none; background:none; font-size:13px; font-weight:bold; color:var(--sub); border-bottom:3px solid transparent; }
+  .tabs button.on { color:var(--green); border-bottom-color:var(--green); }
+  main { padding:12px; }
+  .item { background:var(--card); border-radius:12px; padding:12px 14px; margin-bottom:10px; display:flex; align-items:center; gap:10px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+  .item .info { flex:1; min-width:0; }
+  .item .name { font-weight:bold; font-size:16px; }
+  .item .meta { font-size:12px; color:var(--sub); margin-top:2px; }
+  .item .meta .exp-warn { color:var(--red); font-weight:bold; }
+  .item button { border:none; border-radius:10px; padding:10px 12px; font-size:13px; font-weight:bold; }
+  .b-use { background:#fdecea; color:var(--red); }
+  .b-edit { background:#eef6ef; color:var(--green); }
+  .b-buy { background:var(--green); color:#fff; }
+  .empty { text-align:center; color:var(--sub); padding:40px 10px; font-size:14px; }
+  .fab { position:fixed; right:18px; bottom:18px; width:60px; height:60px; border-radius:50%; background:var(--green); color:#fff; font-size:30px; border:none; box-shadow:0 4px 10px rgba(0,0,0,.25); z-index:20; }
+  dialog { border:none; border-radius:16px; padding:20px; width:min(92vw,420px); }
+  dialog::backdrop { background:rgba(0,0,0,.45); }
+  dialog h2 { font-size:16px; margin-bottom:14px; color:var(--green); }
+  dialog label { display:block; font-size:12px; color:var(--sub); margin:10px 0 4px; }
+  dialog input, dialog select { width:100%; padding:12px; font-size:16px; border:1.5px solid #ddd; border-radius:10px; }
+  .row2 { display:flex; gap:10px; } .row2>div { flex:1; }
+  .dlg-btns { display:flex; gap:10px; margin-top:18px; }
+  .dlg-btns button { flex:1; padding:13px; border:none; border-radius:10px; font-size:15px; font-weight:bold; }
+  .b-pri { background:var(--green); color:#fff; } .b-sec { background:#eee; color:var(--ink); }
+  .toast { position:fixed; left:50%; transform:translateX(-50%); bottom:100px; background:var(--ink); color:#fff; padding:10px 18px; border-radius:20px; font-size:13px; opacity:0; transition:.3s; z-index:30; }
+  .toast.show { opacity:1; }
+  .setup-note { background:#fff8e6; border:1px solid #e8d9a0; border-radius:10px; padding:10px; font-size:12px; line-height:1.6; margin-top:10px; color:#7a6a30; }
+  .total { font-size:13px; color:var(--sub); text-align:right; margin:4px 4px 10px; }
+  .updated { font-size:11px; color:var(--sub); text-align:center; margin-top:14px; }
+</style>
+</head>
+<body>
+<header>
+  <span style="font-size:24px">🐸</span><h1>ふく冷蔵庫</h1>
+  <button id="btnReload">更新</button><button id="btnSettings">設定</button>
+</header>
+<div class="tabs" id="tabs"></div>
+<main id="main"><div class="empty">読み込み中…</div></main>
+<button class="fab" id="btnAdd">＋</button>
+<div class="toast" id="toast"></div>
+
+<dialog id="dlgItem">
+  <h2 id="dlgItemTitle">食材を追加</h2>
+  <label>名前</label><input id="fName" placeholder="例: 豚バラ">
+  <div class="row2">
+    <div><label>量</label><input id="fQty" placeholder="例: 200g / 2袋"></div>
+    <div><label>価格(円)</label><input id="fPrice" type="number" inputmode="numeric" placeholder="例: 280"></div>
+  </div>
+  <div class="row2">
+    <div><label>場所</label><select id="fSection"><option value="fridge">冷蔵庫</option><option value="freezer">冷凍庫</option><option value="pantry">調味料</option><option value="shopping">買い物リスト</option></select></div>
+    <div><label>期限目安</label><input id="fExpiry" type="date"></div>
+  </div>
+  <div class="dlg-btns"><button class="b-sec" onclick="dlgItem.close()">やめる</button><button class="b-pri" id="btnSaveItem">保存</button></div>
+</dialog>
+
+<dialog id="dlgSettings">
+  <h2>接続設定（初回のみ）</h2>
+  <label>GitHubユーザー名/リポジトリ名</label><input id="sRepo" placeholder="例: taro/fuku-x">
+  <label>アクセストークン（Fine-grained・このリポジトリのContents読み書きのみ許可）</label><input id="sToken" type="password" placeholder="github_pat_…">
+  <div class="setup-note">トークンはこの端末のブラウザ内にだけ保存されます。GitHub→Settings→Developer settings→Fine-grained tokensで、対象をこのリポジトリだけ・権限はContents(Read and write)だけにして発行してください。</div>
+  <div class="dlg-btns"><button class="b-sec" onclick="dlgSettings.close()">閉じる</button><button class="b-pri" id="btnSaveSettings">保存して接続</button></div>
+</dialog>
+
+<script>
+const SECTIONS = { fridge:"冷蔵庫", freezer:"冷凍庫", pantry:"調味料", shopping:"買い物" };
+let data = null, sha = null, tab = "fridge", editing = null;
+const $ = id => document.getElementById(id);
+const cfg = () => ({ repo: localStorage.fkRepo || "", token: localStorage.fkToken || "" });
+const api = path => `https://api.github.com/repos/${cfg().repo}/contents/${path}`;
+const hdrs = () => ({ "Authorization": `Bearer ${cfg().token}`, "Accept": "application/vnd.github+json" });
+const enc = s => btoa(unescape(encodeURIComponent(s)));
+const dec = s => decodeURIComponent(escape(atob(s.replace(/\n/g,""))));
+const toast = m => { $("toast").textContent = m; $("toast").classList.add("show"); setTimeout(()=>$("toast").classList.remove("show"), 2200); };
+
+async function load() {
+  if (!cfg().repo || !cfg().token) { $("main").innerHTML = '<div class="empty">右上の「設定」からGitHub接続を設定してください🐸</div>'; return; }
+  try {
+    const r = await fetch(api("fridge.json") + "?t=" + Date.now(), { headers: hdrs() });
+    if (!r.ok) throw new Error(r.status);
+    const j = await r.json();
+    sha = j.sha; data = JSON.parse(dec(j.content));
+    ["fridge","freezer","pantry","shopping"].forEach(k => { if (!Array.isArray(data[k])) data[k] = []; });
+    render();
+  } catch(e) { $("main").innerHTML = `<div class="empty">読み込み失敗（${e.message}）。設定を確認してください</div>`; }
+}
+async function save(msg) {
+  try {
+    data.updated = new Date().toISOString();
+    const body = { message: msg || "在庫更新（アプリ）", content: enc(JSON.stringify(data, null, 2)), sha };
+    const r = await fetch(api("fridge.json"), { method:"PUT", headers:{...hdrs(),"Content-Type":"application/json"}, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error(r.status);
+    sha = (await r.json()).content.sha;
+    toast("保存しました🐸"); render();
+  } catch(e) { toast("保存失敗: " + e.message + "（再読込してやり直してください）"); }
+}
+function daysLeft(d){ if(!d) return null; return Math.ceil((new Date(d) - new Date())/86400000); }
+function render() {
+  $("tabs").innerHTML = Object.entries(SECTIONS).map(([k,v]) =>
+    `<button class="${k===tab?'on':''}" onclick="tab='${k}';render()">${v}${data[k].length?`(${data[k].length})`:""}</button>`).join("");
+  const list = data[tab];
+  let html = "";
+  if (tab === "shopping" && list.length) {
+    const est = list.reduce((s,i)=> s + (data.price_memo?.[i.name+(i.note||"")] || data.price_memo?.[i.name] || 0), 0);
+    if (est) html += `<div class="total">目安合計: 約${est}円</div>`;
+  }
+  html += list.length ? list.map((it,i) => {
+    const dl = daysLeft(it.expiry);
+    const meta = [it.qty, it.price?`${it.price}円`:null, it.note,
+      it.expiry ? (dl<=2?`<span class="exp-warn">期限あと${dl}日</span>`:`期限${it.expiry.slice(5)}`) : null].filter(Boolean).join(" ／ ");
+    const btns = tab==="shopping"
+      ? `<button class="b-buy" onclick="bought(${i})">買った</button>`
+      : `<button class="b-edit" onclick="editItem(${i})">編集</button><button class="b-use" onclick="useUp(${i})">使い切り</button>`;
+    return `<div class="item"><div class="info"><div class="name">${it.name}</div><div class="meta">${meta||"&nbsp;"}</div></div>${btns}</div>`;
+  }).join("") : `<div class="empty">${SECTIONS[tab]}は空です</div>`;
+  html += `<div class="updated">最終更新: ${data.updated ? new Date(data.updated).toLocaleString("ja-JP") : "-"}</div>`;
+  $("main").innerHTML = html;
+}
+function useUp(i){ const it = data[tab][i]; if(!confirm(`「${it.name}」を使い切りにしますか？`)) return; data[tab].splice(i,1); save(`使い切り: ${it.name}`); }
+function bought(i){
+  const it = data.shopping[i];
+  const price = prompt(`「${it.name}」いくらでした？（円・わからなければ空欄）`);
+  data.shopping.splice(i,1);
+  const rec = { name: it.name, qty: it.note || "", bought: new Date().toISOString().slice(0,10) };
+  if (price) { rec.price = +price; data.price_memo = data.price_memo || {}; data.price_memo[it.name] = +price; }
+  const sec = /チューブ|ポン酢|油|醤油|味噌|塩|砂糖|酢|だし|タレ/.test(it.name) ? "pantry" : "fridge";
+  if (sec === "pantry") data.pantry.push({ name: rec.name, level: "ok" }); else data.fridge.push(rec);
+  save(`購入: ${it.name}`);
+}
+function editItem(i){
+  editing = i; const it = data[tab][i];
+  $("dlgItemTitle").textContent = "編集"; $("fName").value = it.name; $("fQty").value = it.qty||""; $("fPrice").value = it.price||""; $("fExpiry").value = it.expiry||""; $("fSection").value = tab;
+  dlgItem.showModal();
+}
+$("btnAdd").onclick = () => { editing = null; $("dlgItemTitle").textContent = "追加"; ["fName","fQty","fPrice","fExpiry"].forEach(id=>$(id).value=""); $("fSection").value = tab; dlgItem.showModal(); };
+$("btnSaveItem").onclick = () => {
+  const name = $("fName").value.trim(); if (!name) return;
+  const sec = $("fSection").value;
+  const it = { name, qty: $("fQty").value.trim() };
+  if ($("fPrice").value) it.price = +$("fPrice").value;
+  if ($("fExpiry").value) it.expiry = $("fExpiry").value;
+  if (sec === "shopping") { data.shopping.push({ name, note: $("fQty").value.trim() }); }
+  else if (sec === "pantry") { data.pantry.push({ name, level: "ok" }); }
+  else {
+    it.bought = it.bought || new Date().toISOString().slice(0,10);
+    if (editing !== null && sec === tab) data[tab][editing] = { ...data[tab][editing], ...it };
+    else data[sec].push(it);
+  }
+  if (editing !== null && sec !== tab) data[tab].splice(editing,1);
+  dlgItem.close(); save(`${editing!==null?"編集":"追加"}: ${name}`);
+};
+$("btnSettings").onclick = () => { $("sRepo").value = cfg().repo; $("sToken").value = cfg().token; dlgSettings.showModal(); };
+$("btnSaveSettings").onclick = () => { localStorage.fkRepo = $("sRepo").value.trim(); localStorage.fkToken = $("sToken").value.trim(); dlgSettings.close(); load(); };
+$("btnReload").onclick = load;
+load();
+</script>
+</body>
+</html>
