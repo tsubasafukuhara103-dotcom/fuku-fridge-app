@@ -87,16 +87,25 @@ const enc = s => btoa(unescape(encodeURIComponent(s)));
 const dec = s => decodeURIComponent(escape(atob(s.replace(/\n/g,""))));
 const toast = m => { $("toast").textContent = m; $("toast").classList.add("show"); setTimeout(()=>$("toast").classList.remove("show"), 2200); };
 
+function explain(status) {
+  if (status === 401) return "トークンが正しくないようです（コピーが途中で切れていないか、有効期限を確認）";
+  if (status === 403) return "トークンの権限不足です（Contents を Read and write にして再発行）";
+  if (status === 404) return "リポジトリ名が違うか、トークンの Repository access に fuku-x が入っていません";
+  return "通信エラーです（電波を確認して「更新」を押してください）";
+}
 async function load() {
   if (!cfg().repo || !cfg().token) { $("main").innerHTML = '<div class="empty">右上の「設定」からGitHub接続を設定してください🐸</div>'; return; }
+  $("main").innerHTML = '<div class="empty">接続中…</div>';
   try {
     const r = await fetch(api("fridge.json") + "?t=" + Date.now(), { headers: hdrs() });
-    if (!r.ok) throw new Error(r.status);
+    if (!r.ok) throw { status: r.status };
     const j = await r.json();
     sha = j.sha; data = JSON.parse(dec(j.content));
     ["fridge","freezer","pantry","shopping"].forEach(k => { if (!Array.isArray(data[k])) data[k] = []; });
-    render();
-  } catch(e) { $("main").innerHTML = `<div class="empty">読み込み失敗（${e.message}）。設定を確認してください</div>`; }
+    render(); toast("接続OK🐸");
+  } catch(e) {
+    $("main").innerHTML = `<div class="empty">接続失敗（${e.status || "network"}）<br><br>${explain(e.status)}<br><br><button class="b-buy" style="padding:12px 20px" onclick="btnSettings.click()">設定を開く</button></div>`;
+  }
 }
 async function save(msg) {
   try {
@@ -163,8 +172,19 @@ $("btnSaveItem").onclick = () => {
   if (editing !== null && sec !== tab) data[tab].splice(editing,1);
   dlgItem.close(); save(`${editing!==null?"編集":"追加"}: ${name}`);
 };
-$("btnSettings").onclick = () => { $("sRepo").value = cfg().repo; $("sToken").value = cfg().token; dlgSettings.showModal(); };
-$("btnSaveSettings").onclick = () => { localStorage.fkRepo = $("sRepo").value.trim(); localStorage.fkToken = $("sToken").value.trim(); dlgSettings.close(); load(); };
+function normRepo(s) {
+  s = (s || "").replace(/\s/g, "").replace(/^(https?:\/\/)?(www\.)?github\.com\//i, "").replace(/\/+$/, "").replace(/\.git$/i, "");
+  return s;
+}
+$("btnSettings").onclick = () => { $("sRepo").value = cfg().repo || "tsubasafukuhara103-dotcom/fuku-x"; $("sToken").value = cfg().token; dlgSettings.showModal(); };
+$("btnSaveSettings").onclick = () => {
+  const repo = normRepo($("sRepo").value);
+  const token = $("sToken").value.replace(/\s/g, "");
+  if (!/^[^\/]+\/[^\/]+$/.test(repo)) { alert("リポジトリ名は「ユーザー名/リポジトリ名」の形にしてください\n例: tsubasafukuhara103-dotcom/fuku-x"); return; }
+  if (!token) { alert("トークンを入力してください（github_pat_ で始まる文字列）"); return; }
+  localStorage.fkRepo = repo; localStorage.fkToken = token;
+  dlgSettings.close(); load();
+};
 $("btnReload").onclick = load;
 load();
 </script>
