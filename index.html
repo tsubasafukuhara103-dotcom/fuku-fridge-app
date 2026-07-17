@@ -52,6 +52,7 @@
 <div class="tabs" id="tabs"></div>
 <main id="main"><div class="empty">読み込み中…</div></main>
 <button class="fab" id="btnAdd">＋</button>
+<input type="file" id="fCam" accept="image/*" capture="environment" style="display:none">
 <div class="toast" id="toast"></div>
 
 <dialog id="dlgItem">
@@ -77,8 +78,8 @@
 </dialog>
 
 <script>
-const SECTIONS = { fridge:"冷蔵庫", freezer:"冷凍庫", pantry:"調味料", shopping:"買い物" };
-let data = null, sha = null, tab = "fridge", editing = null;
+const SECTIONS = { fridge:"冷蔵庫", freezer:"冷凍庫", pantry:"調味料", shopping:"買い物", receipts:"レシート" };
+let data = null, sha = null, tab = "fridge", editing = null, receipts = null;
 const $ = id => document.getElementById(id);
 const cfg = () => ({ repo: localStorage.fkRepo || "", token: localStorage.fkToken || "" });
 const api = path => `https://api.github.com/repos/${cfg().repo}/contents/${path}`;
@@ -120,7 +121,9 @@ async function save(msg) {
 function daysLeft(d){ if(!d) return null; return Math.ceil((new Date(d) - new Date())/86400000); }
 function render() {
   $("tabs").innerHTML = Object.entries(SECTIONS).map(([k,v]) =>
-    `<button class="${k===tab?'on':''}" onclick="tab='${k}';render()">${v}${data[k].length?`(${data[k].length})`:""}</button>`).join("");
+    `<button class="${k===tab?'on':''}" onclick="tab='${k}';render()">${v}${k!=="receipts"&&data[k].length?`(${data[k].length})`:""}</button>`).join("");
+  $("btnAdd").textContent = tab === "receipts" ? "📷" : "＋";
+  if (tab === "receipts") { renderReceipts(); return; }
   const list = data[tab];
   let html = "";
   if (tab === "shopping" && list.length) {
@@ -155,7 +158,64 @@ function editItem(i){
   $("dlgItemTitle").textContent = "編集"; $("fName").value = it.name; $("fQty").value = it.qty||""; $("fPrice").value = it.price||""; $("fExpiry").value = it.expiry||""; $("fSection").value = tab;
   dlgItem.showModal();
 }
-$("btnAdd").onclick = () => { editing = null; $("dlgItemTitle").textContent = "追加"; ["fName","fQty","fPrice","fExpiry"].forEach(id=>$(id).value=""); $("fSection").value = tab; dlgItem.showModal(); };
+// ---- レシート ----
+async function renderReceipts() {
+  if (receipts === null) {
+    $("main").innerHTML = '<div class="empty">レシート一覧を取得中…</div>';
+    try {
+      const r = await fetch(api("receipts") + "?t=" + Date.now(), { headers: hdrs() });
+      receipts = r.ok ? (await r.json()).filter(f => f.type === "file") : [];
+    } catch(e) { receipts = []; }
+  }
+  const list = [...receipts].sort((a,b) => b.name.localeCompare(a.name));
+  $("main").innerHTML =
+    `<div class="total">📷ボタンでレシートを撮影→保存。あとはClaudeに「レシート読んで」と言えば在庫に反映されます</div>` +
+    (list.length ? list.map(f =>
+      `<div class="item"><div class="info"><div class="name">🧾 ${f.name.replace(/\.jpg$/,"")}</div><div class="meta">${Math.round(f.size/1024)}KB${f.name.includes("_done")?" ／ 反映済み":""}</div></div>
+       <button class="b-edit" onclick="viewReceipt('${f.path}')">見る</button>
+       <button class="b-use" onclick="delReceipt('${f.path}','${f.sha}')">削除</button></div>`).join("")
+    : '<div class="empty">保存されたレシートはまだありません</div>');
+}
+async function viewReceipt(path) {
+  toast("画像を取得中…");
+  try {
+    const r = await fetch(api(path), { headers: {...hdrs(), "Accept": "application/vnd.github.raw+json"} });
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const w = window.open(); w.document.write(`<img src="${url}" style="width:100%">`);
+  } catch(e) { toast("取得失敗"); }
+}
+async function delReceipt(path, fsha) {
+  if (!confirm("このレシートを削除しますか？")) return;
+  try {
+    const r = await fetch(api(path), { method:"DELETE", headers:{...hdrs(),"Content-Type":"application/json"}, body: JSON.stringify({ message:"レシート削除（アプリ）", sha:fsha }) });
+    if (!r.ok) throw new Error(r.status);
+    receipts = null; toast("削除しました"); renderReceipts();
+  } catch(e) { toast("削除失敗: " + e.message); }
+}
+function stamp() {
+  const d = new Date(), p = n => String(n).padStart(2,"0");
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+async function uploadReceipt(file) {
+  $("main").innerHTML = '<div class="empty">アップロード中…（数秒かかります）</div>';
+  try {
+    const img = await createImageBitmap(file);
+    const scale = Math.min(1, 1400 / Math.max(img.width, img.height));
+    const cv = document.createElement("canvas");
+    cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
+    cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+    const b64 = cv.toDataURL("image/jpeg", 0.82).split(",")[1];
+    const path = `receipts/${stamp()}.jpg`;
+    const r = await fetch(api(path), { method:"PUT", headers:{...hdrs(),"Content-Type":"application/json"}, body: JSON.stringify({ message:"レシート追加（アプリ）", content: b64 }) });
+    if (!r.ok) throw new Error(r.status);
+    receipts = null; toast("レシートを保存しました🐸"); renderReceipts();
+  } catch(e) { toast("保存失敗: " + e.message); renderReceipts(); }
+}
+$("fCam").onchange = e => { if (e.target.files[0]) uploadReceipt(e.target.files[0]); e.target.value = ""; };
+$("btnAdd").onclick = () => {
+  if (tab === "receipts") { $("fCam").click(); return; }
+  editing = null; $("dlgItemTitle").textContent = "追加"; ["fName","fQty","fPrice","fExpiry"].forEach(id=>$(id).value=""); $("fSection").value = tab; dlgItem.showModal(); };
 $("btnSaveItem").onclick = () => {
   const name = $("fName").value.trim(); if (!name) return;
   const sec = $("fSection").value;
