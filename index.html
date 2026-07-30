@@ -103,7 +103,7 @@
 </dialog>
 
 <script>
-const SECTIONS = { fridge:"冷蔵庫", recipes:"レシピ", freezer:"冷凍庫", pantry:"調味料", shopping:"買い物", receipts:"レシート" };
+const SECTIONS = { fridge:"冷蔵庫", recipes:"レシピ", tsukurioki:"作り置き", freezer:"冷凍庫", pantry:"調味料", shopping:"買い物", receipts:"レシート" };
 let data = null, sha = null, tab = "fridge", editing = null, receipts = null;
 let recipesData = null, recipesSha = null, currentRecipeId = null;
 const $ = id => document.getElementById(id);
@@ -147,11 +147,12 @@ async function save(msg) {
 function daysLeft(d){ if(!d) return null; return Math.ceil((new Date(d) - new Date())/86400000); }
 function render() {
   $("tabs").innerHTML = Object.entries(SECTIONS).map(([k,v]) =>
-    `<button class="${k===tab?'on':''}" onclick="tab='${k}';render()">${v}${(k!=="receipts"&&k!=="recipes")&&data[k].length?`(${data[k].length})`:""}</button>`).join("");
+    `<button class="${k===tab?'on':''}" onclick="tab='${k}';render()">${v}${(k!=="receipts"&&k!=="recipes"&&k!=="tsukurioki")&&data[k].length?`(${data[k].length})`:""}</button>`).join("");
   $("btnAdd").textContent = tab === "receipts" ? "📷" : "＋";
-  $("btnAdd").style.display = tab === "recipes" ? "none" : "";
+  $("btnAdd").style.display = (tab === "recipes" || tab === "tsukurioki") ? "none" : "";
   if (tab === "receipts") { renderReceipts(); return; }
   if (tab === "recipes") { renderRecipes(); return; }
+  if (tab === "tsukurioki") { renderTsukurioki(); return; }
   const list = data[tab];
   let html = "";
   if (tab === "shopping" && list.length) {
@@ -186,33 +187,40 @@ function editItem(i){
   $("dlgItemTitle").textContent = "編集"; $("fName").value = it.name; $("fQty").value = it.qty||""; $("fPrice").value = it.price||""; $("fExpiry").value = it.expiry||""; $("fSection").value = tab;
   dlgItem.showModal();
 }
-// ---- レシピ ----
-async function renderRecipes() {
-  if (recipesData === null) {
-    $("main").innerHTML = '<div class="empty">レシピ候補を取得中…</div>';
-    try {
-      const r = await fetch(api("recipes.json") + "?t=" + Date.now(), { headers: hdrs() });
-      if (r.ok) { const j = await r.json(); recipesSha = j.sha; recipesData = JSON.parse(dec(j.content)); }
-      else { recipesData = { candidates: [] }; }
-    } catch(e) { recipesData = { candidates: [] }; }
-  }
-  const all = recipesData.candidates || [];
-  const mains = all.filter(r => r.category !== "side" && r.status !== "cooked");
-  const sides = all.filter(r => r.category === "side");
-  const card = r => `
+// ---- レシピ／作り置き ----
+async function ensureRecipesLoaded() {
+  if (recipesData !== null) return;
+  $("main").innerHTML = '<div class="empty">レシピ候補を取得中…</div>';
+  try {
+    const r = await fetch(api("recipes.json") + "?t=" + Date.now(), { headers: hdrs() });
+    if (r.ok) { const j = await r.json(); recipesSha = j.sha; recipesData = JSON.parse(dec(j.content)); }
+    else { recipesData = { candidates: [] }; }
+  } catch(e) { recipesData = { candidates: [] }; }
+}
+function recipeCard(r) {
+  return `
       <div class="item" style="align-items:flex-start">
         <div class="info">
-          <div class="name">${r.category === "side" ? "🥗 " : ""}${r.name}</div>
+          <div class="name">${r.name}</div>
           <div class="meta">材料費 約${r.cost}円 ／ <b style="color:var(--green)">差額 ¥${r.diff} → NISAへ</b>${r.cooked_date ? `<br>前回 ${r.cooked_date}` : ""}</div>
         </div>
         <button class="b-edit" onclick="openRecipe('${r.id}')">くわしく</button>
       </div>`;
+}
+async function renderRecipes() {
+  await ensureRecipesLoaded();
+  const mains = (recipesData.candidates || []).filter(r => r.category !== "side" && r.status !== "cooked");
   $("main").innerHTML =
     `<div class="total">気になるものをタップして詳細を見てください。使い切ったら在庫も自動で減らせます</div>` +
-    `<div style="font-weight:bold;color:var(--sub);font-size:13px;margin:6px 4px">🍳 主菜</div>` +
-    (mains.length ? mains.map(card).join("") : '<div class="empty">候補がありません。Claudeに「レシピ考えて」と言ってください🐸</div>') +
-    `<div style="font-weight:bold;color:var(--sub);font-size:13px;margin:16px 4px 6px">🥗 作り置き副菜（いつでも選べます）</div>` +
-    (sides.length ? sides.map(card).join("") : '<div class="empty">副菜の候補はまだありません</div>') +
+    (mains.length ? mains.map(recipeCard).join("") : '<div class="empty">候補がありません。Claudeに「レシピ考えて」と言ってください🐸</div>') +
+    `<div class="updated">最終更新: ${recipesData.updated ? new Date(recipesData.updated).toLocaleString("ja-JP") : "-"}</div>`;
+}
+async function renderTsukurioki() {
+  await ensureRecipesLoaded();
+  const sides = (recipesData.candidates || []).filter(r => r.category === "side");
+  $("main").innerHTML =
+    `<div class="total">彩り担当の作り置き副菜。作っても一覧から消えず、いつでも選べます</div>` +
+    (sides.length ? sides.map(recipeCard).join("") : '<div class="empty">候補がありません。Claudeに「レシピ考えて」と言ってください🐸</div>') +
     `<div class="updated">最終更新: ${recipesData.updated ? new Date(recipesData.updated).toLocaleString("ja-JP") : "-"}</div>`;
 }
 function openRecipe(id) {
