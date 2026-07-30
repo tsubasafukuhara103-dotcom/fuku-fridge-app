@@ -82,6 +82,18 @@
   <div class="dlg-btns"><button class="b-sec" onclick="dlgItem.close()">やめる</button><button class="b-pri" id="btnSaveItem">保存</button></div>
 </dialog>
 
+<dialog id="dlgRecipe">
+  <h2 id="dlgRecipeTitle">レシピ</h2>
+  <div id="dlgRecipeBody"></div>
+  <label>投稿文（コピーしてXへ）</label>
+  <textarea id="dlgRecipePost" rows="4" readonly style="width:100%;padding:10px;font-size:14px;border:1.5px solid #ddd;border-radius:10px;resize:vertical"></textarea>
+  <div class="dlg-btns">
+    <button class="b-sec" onclick="navigator.clipboard.writeText($('dlgRecipePost').value);toast('コピーしました')">コピー</button>
+    <button class="b-sec" onclick="dlgRecipe.close()">やめる</button>
+    <button class="b-pri" onclick="cookRecipe()">作った・在庫更新</button>
+  </div>
+</dialog>
+
 <dialog id="dlgSettings">
   <h2>接続設定（初回のみ）</h2>
   <label>GitHubユーザー名/リポジトリ名</label><input id="sRepo" placeholder="例: taro/fuku-x">
@@ -91,8 +103,9 @@
 </dialog>
 
 <script>
-const SECTIONS = { fridge:"冷蔵庫", freezer:"冷凍庫", pantry:"調味料", shopping:"買い物", receipts:"レシート" };
+const SECTIONS = { fridge:"冷蔵庫", recipes:"レシピ", freezer:"冷凍庫", pantry:"調味料", shopping:"買い物", receipts:"レシート" };
 let data = null, sha = null, tab = "fridge", editing = null, receipts = null;
+let recipesData = null, recipesSha = null, currentRecipeId = null;
 const $ = id => document.getElementById(id);
 const cfg = () => ({ repo: localStorage.fkRepo || "", token: localStorage.fkToken || "" });
 const api = path => `https://api.github.com/repos/${cfg().repo}/contents/${path}`;
@@ -134,9 +147,11 @@ async function save(msg) {
 function daysLeft(d){ if(!d) return null; return Math.ceil((new Date(d) - new Date())/86400000); }
 function render() {
   $("tabs").innerHTML = Object.entries(SECTIONS).map(([k,v]) =>
-    `<button class="${k===tab?'on':''}" onclick="tab='${k}';render()">${v}${k!=="receipts"&&data[k].length?`(${data[k].length})`:""}</button>`).join("");
+    `<button class="${k===tab?'on':''}" onclick="tab='${k}';render()">${v}${(k!=="receipts"&&k!=="recipes")&&data[k].length?`(${data[k].length})`:""}</button>`).join("");
   $("btnAdd").textContent = tab === "receipts" ? "📷" : "＋";
+  $("btnAdd").style.display = tab === "recipes" ? "none" : "";
   if (tab === "receipts") { renderReceipts(); return; }
+  if (tab === "recipes") { renderRecipes(); return; }
   const list = data[tab];
   let html = "";
   if (tab === "shopping" && list.length) {
@@ -170,6 +185,77 @@ function editItem(i){
   editing = i; const it = data[tab][i];
   $("dlgItemTitle").textContent = "編集"; $("fName").value = it.name; $("fQty").value = it.qty||""; $("fPrice").value = it.price||""; $("fExpiry").value = it.expiry||""; $("fSection").value = tab;
   dlgItem.showModal();
+}
+// ---- レシピ ----
+async function renderRecipes() {
+  if (recipesData === null) {
+    $("main").innerHTML = '<div class="empty">レシピ候補を取得中…</div>';
+    try {
+      const r = await fetch(api("recipes.json") + "?t=" + Date.now(), { headers: hdrs() });
+      if (r.ok) { const j = await r.json(); recipesSha = j.sha; recipesData = JSON.parse(dec(j.content)); }
+      else { recipesData = { candidates: [] }; }
+    } catch(e) { recipesData = { candidates: [] }; }
+  }
+  const list = (recipesData.candidates || []).filter(r => r.status !== "cooked");
+  $("main").innerHTML =
+    `<div class="total">気になるものをタップして詳細を見てください。使い切ったら在庫も自動で減らせます</div>` +
+    (list.length ? list.map(r => `
+      <div class="item" style="align-items:flex-start">
+        <div class="info">
+          <div class="name">${r.name}</div>
+          <div class="meta">材料費 約${r.cost}円 ／ <b style="color:var(--green)">差額 ¥${r.diff} → NISAへ</b></div>
+        </div>
+        <button class="b-edit" onclick="openRecipe('${r.id}')">くわしく</button>
+      </div>`).join("")
+    : '<div class="empty">候補がありません。Claudeに「レシピ考えて」と言ってください🐸</div>')
+    + `<div class="updated">最終更新: ${recipesData.updated ? new Date(recipesData.updated).toLocaleString("ja-JP") : "-"}</div>`;
+}
+function openRecipe(id) {
+  const r = (recipesData.candidates || []).find(x => x.id === id);
+  if (!r) return;
+  currentRecipeId = id;
+  const ingHtml = r.ingredients.map(i => `・${i.name}（${i.qty}）… ${i.price}円`).join("<br>");
+  const pantryHtml = r.pantry && r.pantry.length ? `<br><span style="color:var(--sub)">家にあるやつ: ${r.pantry.join("・")}</span>` : "";
+  const stepsHtml = r.steps.map((s,i) => `${i+1}. ${s}`).join("<br>");
+  $("dlgRecipeTitle").textContent = r.name;
+  $("dlgRecipeBody").innerHTML =
+    `<div style="font-size:13px;line-height:1.8">${ingHtml}${pantryHtml}</div>
+     <div style="margin:12px 0 4px;font-size:13px;line-height:1.8"><b>作り方</b><br>${stepsHtml}</div>
+     <div style="font-size:12px;color:var(--sub)">${r.diff_note || ""}</div>`;
+  $("dlgRecipePost").value = r.post_text || "";
+  dlgRecipe.showModal();
+}
+function removeFromInventory(name) {
+  for (const sec of ["fridge","freezer"]) {
+    const idx = data[sec].findIndex(it => it.name === name || it.name.includes(name) || name.includes(it.name));
+    if (idx >= 0) { data[sec].splice(idx, 1); return true; }
+  }
+  return false;
+}
+async function cookRecipe() {
+  const r = (recipesData.candidates || []).find(x => x.id === currentRecipeId);
+  if (!r) return;
+  if (!confirm(`「${r.name}」を作ったことにして、在庫を更新しますか？`)) return;
+  r.ingredients.forEach(ing => removeFromInventory(ing.name));
+  r.status = "cooked";
+  r.cooked_date = new Date().toISOString().slice(0,10);
+  try {
+    data.updated = new Date().toISOString();
+    let res = await fetch(api("fridge.json"), { method:"PUT", headers:{...hdrs(),"Content-Type":"application/json"},
+      body: JSON.stringify({ message:`調理: ${r.name}`, content: enc(JSON.stringify(data, null, 2)), sha }) });
+    if (!res.ok) throw new Error("fridge:" + res.status);
+    sha = (await res.json()).content.sha;
+
+    recipesData.updated = new Date().toISOString();
+    res = await fetch(api("recipes.json"), { method:"PUT", headers:{...hdrs(),"Content-Type":"application/json"},
+      body: JSON.stringify({ message:`調理済みに変更: ${r.name}`, content: enc(JSON.stringify(recipesData, null, 2)), sha: recipesSha }) });
+    if (!res.ok) throw new Error("recipes:" + res.status);
+    recipesSha = (await res.json()).content.sha;
+
+    dlgRecipe.close();
+    toast("お疲れ様でした！在庫を更新しました🐸");
+    render();
+  } catch(e) { toast("保存失敗: " + e.message); }
 }
 // ---- レシート ----
 async function renderReceipts() {
