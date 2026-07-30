@@ -196,19 +196,24 @@ async function renderRecipes() {
       else { recipesData = { candidates: [] }; }
     } catch(e) { recipesData = { candidates: [] }; }
   }
-  const list = (recipesData.candidates || []).filter(r => r.status !== "cooked");
-  $("main").innerHTML =
-    `<div class="total">気になるものをタップして詳細を見てください。使い切ったら在庫も自動で減らせます</div>` +
-    (list.length ? list.map(r => `
+  const all = recipesData.candidates || [];
+  const mains = all.filter(r => r.category !== "side" && r.status !== "cooked");
+  const sides = all.filter(r => r.category === "side");
+  const card = r => `
       <div class="item" style="align-items:flex-start">
         <div class="info">
-          <div class="name">${r.name}</div>
-          <div class="meta">材料費 約${r.cost}円 ／ <b style="color:var(--green)">差額 ¥${r.diff} → NISAへ</b></div>
+          <div class="name">${r.category === "side" ? "🥗 " : ""}${r.name}</div>
+          <div class="meta">材料費 約${r.cost}円 ／ <b style="color:var(--green)">差額 ¥${r.diff} → NISAへ</b>${r.cooked_date ? `<br>前回 ${r.cooked_date}` : ""}</div>
         </div>
         <button class="b-edit" onclick="openRecipe('${r.id}')">くわしく</button>
-      </div>`).join("")
-    : '<div class="empty">候補がありません。Claudeに「レシピ考えて」と言ってください🐸</div>')
-    + `<div class="updated">最終更新: ${recipesData.updated ? new Date(recipesData.updated).toLocaleString("ja-JP") : "-"}</div>`;
+      </div>`;
+  $("main").innerHTML =
+    `<div class="total">気になるものをタップして詳細を見てください。使い切ったら在庫も自動で減らせます</div>` +
+    `<div style="font-weight:bold;color:var(--sub);font-size:13px;margin:6px 4px">🍳 主菜</div>` +
+    (mains.length ? mains.map(card).join("") : '<div class="empty">候補がありません。Claudeに「レシピ考えて」と言ってください🐸</div>') +
+    `<div style="font-weight:bold;color:var(--sub);font-size:13px;margin:16px 4px 6px">🥗 作り置き副菜（いつでも選べます）</div>` +
+    (sides.length ? sides.map(card).join("") : '<div class="empty">副菜の候補はまだありません</div>') +
+    `<div class="updated">最終更新: ${recipesData.updated ? new Date(recipesData.updated).toLocaleString("ja-JP") : "-"}</div>`;
 }
 function openRecipe(id) {
   const r = (recipesData.candidates || []).find(x => x.id === id);
