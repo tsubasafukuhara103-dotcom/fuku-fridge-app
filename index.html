@@ -26,8 +26,8 @@
   header { background:var(--green); color:#fff; padding:14px 16px; display:flex; align-items:center; gap:10px; position:sticky; top:0; z-index:10; }
   header h1 { font-size:18px; flex:1; }
   header button { background:rgba(255,255,255,.2); border:none; color:#fff; border-radius:8px; padding:8px 12px; font-size:13px; }
-  .tabs { display:flex; background:#fff; border-bottom:2px solid var(--green); position:sticky; top:50px; z-index:9; }
-  .tabs button { flex:1; padding:12px 4px; border:none; background:none; font-size:13px; font-weight:bold; color:var(--sub); border-bottom:3px solid transparent; }
+  .tabs { display:flex; background:#fff; border-bottom:2px solid var(--green); position:sticky; top:50px; z-index:9; overflow-x:auto; }
+  .tabs button { flex:1 0 auto; padding:12px 6px; border:none; background:none; font-size:12px; font-weight:bold; color:var(--sub); border-bottom:3px solid transparent; white-space:nowrap; }
   .tabs button.on { color:var(--green); border-bottom-color:var(--green); }
   main { padding:12px; }
   .item { background:var(--card); border-radius:12px; padding:12px 14px; margin-bottom:10px; display:flex; align-items:center; gap:10px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
@@ -59,6 +59,9 @@
   .budget-track { background:#eee; border-radius:6px; height:8px; overflow:hidden; }
   .budget-fill { height:100%; border-radius:6px; transition:width .3s; }
   .budget-remain { font-size:12px; text-align:right; margin-top:6px; font-weight:bold; }
+  .budget-big { font-size:22px; font-weight:bold; letter-spacing:-.5px; }
+  .budget-sub { font-size:12px; color:var(--sub); margin-top:4px; display:flex; justify-content:space-between; }
+  .budget-pace { font-size:12px; margin-top:6px; padding-top:6px; border-top:1px dashed #e3ddcd; display:flex; justify-content:space-between; }
   .updated { font-size:11px; color:var(--sub); text-align:center; margin-top:14px; }
 </style>
 </head>
@@ -99,6 +102,30 @@
   </div>
 </dialog>
 
+<dialog id="dlgSpend">
+  <h2 id="dlgSpendTitle">支出を追加</h2>
+  <div class="row2">
+    <div><label>金額(円)</label><input id="pAmount" type="number" inputmode="numeric" placeholder="例: 1280"></div>
+    <div><label>日付</label><input id="pDate" type="date"></div>
+  </div>
+  <label>種別</label>
+  <select id="pKind">
+    <option value="grocery">スーパー</option>
+    <option value="conv">コンビニ</option>
+    <option value="eat_out">外食</option>
+    <option value="other">その他</option>
+  </select>
+  <label>お店・メモ（任意）</label><input id="pNote" placeholder="例: マルト／昼の弁当">
+  <div class="dlg-btns"><button class="b-sec" onclick="dlgSpend.close()">やめる</button><button class="b-pri" id="btnSaveSpend">保存</button></div>
+</dialog>
+
+<dialog id="dlgBudget">
+  <h2>今月の食費予算</h2>
+  <label>1か月の予算(円)</label><input id="bMonthly" type="number" inputmode="numeric" placeholder="35000">
+  <div class="setup-note">残額は「予算 − 今月の支出合計」で計算します。1日あたりの目安は、残額を月末までの残り日数で割ったものです。</div>
+  <div class="dlg-btns"><button class="b-sec" onclick="dlgBudget.close()">やめる</button><button class="b-pri" id="btnSaveBudget">保存</button></div>
+</dialog>
+
 <dialog id="dlgSettings">
   <h2>接続設定（初回のみ）</h2>
   <label>GitHubユーザー名/リポジトリ名</label><input id="sRepo" placeholder="例: taro/fuku-x">
@@ -108,9 +135,11 @@
 </dialog>
 
 <script>
-const SECTIONS = { fridge:"冷蔵庫", recipes:"レシピ", tsukurioki:"作り置き", freezer:"冷凍庫", pantry:"調味料", shopping:"買い物", receipts:"レシート" };
+const SECTIONS = { fridge:"冷蔵庫", recipes:"レシピ", tsukurioki:"作り置き", freezer:"冷凍庫", pantry:"調味料", shopping:"買い物", spending:"支出", receipts:"レシート" };
+const KINDS = { grocery:"スーパー", conv:"コンビニ", eat_out:"外食", other:"その他" };
 let data = null, sha = null, tab = "fridge", editing = null, receipts = null;
 let recipesData = null, recipesSha = null, currentRecipeId = null;
+let spend = null, spendSha = null, editingSpend = null;
 const $ = id => document.getElementById(id);
 const cfg = () => ({ repo: localStorage.fkRepo || "", token: localStorage.fkToken || "" });
 const api = path => `https://api.github.com/repos/${cfg().repo}/contents/${path}`;
@@ -134,10 +163,19 @@ async function load() {
     const j = await r.json();
     sha = j.sha; data = JSON.parse(dec(j.content));
     ["fridge","freezer","pantry","shopping"].forEach(k => { if (!Array.isArray(data[k])) data[k] = []; });
+    await loadSpending();
     render(); toast("接続OK🐸");
   } catch(e) {
     $("main").innerHTML = `<div class="empty">接続失敗（${e.status || "network"}）<br><br>${explain(e.status)}<br><br><button class="b-buy" style="padding:12px 20px" onclick="btnSettings.click()">設定を開く</button></div>`;
   }
+}
+async function loadSpending() {
+  try {
+    const r = await fetch(api("spending.json") + "?t=" + Date.now(), { headers: hdrs() });
+    if (r.ok) { const j = await r.json(); spendSha = j.sha; spend = JSON.parse(dec(j.content)); }
+    else { spend = { budget:{ monthly:35000 }, entries: [] }; spendSha = null; }
+  } catch(e) { spend = { budget:{ monthly:35000 }, entries: [] }; spendSha = null; }
+  if (!Array.isArray(spend.entries)) spend.entries = [];
 }
 async function save(msg) {
   try {
@@ -151,11 +189,13 @@ async function save(msg) {
 }
 function daysLeft(d){ if(!d) return null; return Math.ceil((new Date(d) - new Date())/86400000); }
 function render() {
+  const counted = ["fridge","freezer","pantry","shopping"];
   $("tabs").innerHTML = Object.entries(SECTIONS).map(([k,v]) =>
-    `<button class="${k===tab?'on':''}" onclick="tab='${k}';render()">${v}${(k!=="receipts"&&k!=="recipes"&&k!=="tsukurioki")&&data[k].length?`(${data[k].length})`:""}</button>`).join("");
+    `<button class="${k===tab?'on':''}" onclick="tab='${k}';render()">${v}${counted.includes(k)&&data[k].length?`(${data[k].length})`:""}</button>`).join("");
   $("btnAdd").textContent = tab === "receipts" ? "📷" : "＋";
   $("btnAdd").style.display = (tab === "recipes" || tab === "tsukurioki") ? "none" : "";
   if (tab === "receipts") { renderReceipts(); return; }
+  if (tab === "spending") { renderSpending(); return; }
   if (tab === "recipes") { renderRecipes(); return; }
   if (tab === "tsukurioki") { renderTsukurioki(); return; }
   const list = data[tab];
@@ -212,24 +252,105 @@ function recipeCard(r) {
         <button class="b-edit" onclick="openRecipe('${r.id}')">くわしく</button>
       </div>`;
 }
-function monthSpent() {
-  const now = new Date(), ym = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0");
-  return (recipesData.candidates || [])
-    .filter(r => r.status === "cooked" && r.cooked_date && r.cooked_date.startsWith(ym))
-    .reduce((s,r) => s + (r.cost || 0), 0);
+// ---- 食費の予算・支出 ----
+const ymNow = () => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0"); };
+function monthEntries() {
+  const ym = ymNow();
+  return (spend && spend.entries || []).filter(e => (e.date || "").startsWith(ym));
+}
+function monthSpent() { return monthEntries().reduce((s,e) => s + (+e.amount || 0), 0); }
+function daysLeftInMonth() {
+  const d = new Date(), last = new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
+  return last - d.getDate() + 1; // 今日を含む
 }
 function budgetBar() {
-  const budget = (recipesData.budget && recipesData.budget.monthly) || 35000;
+  if (!spend) return "";
+  const budget = (spend.budget && spend.budget.monthly) || 35000;
   const spent = monthSpent();
   const remain = budget - spent;
+  const days = daysLeftInMonth();
+  const perDay = Math.floor(remain / days);
   const pct = Math.max(0, Math.min(100, Math.round(spent / budget * 100)));
   const color = remain < 0 ? "var(--red)" : (pct >= 80 ? "#d99a2b" : "var(--green)");
-  return `<div class="budget-bar">
-      <div class="budget-row"><span>今月の食費</span><span>¥${spent.toLocaleString()} / ¥${budget.toLocaleString()}</span></div>
-      <div class="budget-track"><div class="budget-fill" style="width:${pct}%;background:${color}"></div></div>
-      <div class="budget-remain" style="color:${color}">${remain >= 0 ? `残り ¥${remain.toLocaleString()}` : `¥${Math.abs(remain).toLocaleString()} オーバー`}</div>
+  return `<div class="budget-bar" onclick="openBudget()">
+      <div class="budget-row"><span>今月あと使えるお金</span><span>${new Date().getMonth()+1}月</span></div>
+      <div class="budget-big" style="color:${color}">${remain >= 0 ? `¥${remain.toLocaleString()}` : `¥${Math.abs(remain).toLocaleString()} オーバー`}</div>
+      <div class="budget-sub"><span>使った ¥${spent.toLocaleString()}</span><span>予算 ¥${budget.toLocaleString()}</span></div>
+      <div class="budget-track" style="margin-top:6px"><div class="budget-fill" style="width:${pct}%;background:${color}"></div></div>
+      <div class="budget-pace"><span>残り${days}日</span><span style="color:${color};font-weight:bold">1日あたり ¥${remain >= 0 ? perDay.toLocaleString() : 0}</span></div>
     </div>`;
 }
+function renderSpending() {
+  const list = monthEntries().slice().sort((a,b) => (b.date || "").localeCompare(a.date || ""));
+  const byKind = {};
+  list.forEach(e => { byKind[e.kind || "other"] = (byKind[e.kind || "other"] || 0) + (+e.amount || 0); });
+  const breakdown = Object.entries(byKind).map(([k,v]) => `${KINDS[k] || k} ¥${v.toLocaleString()}`).join(" ／ ");
+  $("main").innerHTML =
+    budgetBar() +
+    (breakdown ? `<div class="total">${breakdown}</div>` : "") +
+    (list.length ? list.map(e => {
+      const i = spend.entries.indexOf(e);
+      const kindName = KINDS[e.kind] || "その他";
+      const memo = [e.store, e.note].filter(Boolean).filter(s => s !== kindName).join(" ");
+      return `<div class="item">
+          <div class="info">
+            <div class="name">¥${(+e.amount).toLocaleString()}</div>
+            <div class="meta">${e.date.slice(5)} ／ ${kindName}${memo ? " ／ " + memo : ""}</div>
+          </div>
+          <button class="b-edit" onclick="editSpend(${i})">編集</button>
+          <button class="b-use" onclick="delSpend(${i})">削除</button>
+        </div>`;
+    }).join("") : '<div class="empty">今月の支出はまだありません。＋ボタンで記録できます🐸</div>') +
+    `<div class="updated">最終更新: ${spend.updated ? new Date(spend.updated).toLocaleString("ja-JP") : "-"}</div>`;
+}
+async function saveSpend(msg) {
+  try {
+    spend.updated = new Date().toISOString();
+    const r = await fetch(api("spending.json"), { method:"PUT", headers:{...hdrs(),"Content-Type":"application/json"},
+      body: JSON.stringify({ message: msg || "支出更新（アプリ）", content: enc(JSON.stringify(spend, null, 2)), sha: spendSha }) });
+    if (!r.ok) throw new Error(r.status);
+    spendSha = (await r.json()).content.sha;
+    toast("保存しました🐸"); render();
+  } catch(e) { toast("保存失敗: " + e.message + "（更新を押してやり直してください）"); }
+}
+function openSpend() {
+  editingSpend = null;
+  $("dlgSpendTitle").textContent = "支出を追加";
+  $("pAmount").value = ""; $("pNote").value = ""; $("pKind").value = "grocery";
+  $("pDate").value = new Date().toISOString().slice(0,10);
+  dlgSpend.showModal();
+}
+function editSpend(i) {
+  editingSpend = i; const e = spend.entries[i];
+  $("dlgSpendTitle").textContent = "支出を編集";
+  $("pAmount").value = e.amount || ""; $("pDate").value = e.date || ""; $("pKind").value = e.kind || "other";
+  $("pNote").value = [e.store, e.note].filter(Boolean).join(" ");
+  dlgSpend.showModal();
+}
+function delSpend(i) {
+  const e = spend.entries[i];
+  if (!confirm(`${e.date} の ¥${(+e.amount).toLocaleString()} を削除しますか？`)) return;
+  spend.entries.splice(i,1); saveSpend(`支出削除: ${e.date}`);
+}
+$("btnSaveSpend").onclick = () => {
+  const amount = +$("pAmount").value;
+  if (!amount) { alert("金額を入れてください"); return; }
+  const rec = { date: $("pDate").value || new Date().toISOString().slice(0,10), amount, kind: $("pKind").value };
+  const note = $("pNote").value.trim(); if (note) rec.store = note;
+  if (editingSpend !== null) spend.entries[editingSpend] = { ...spend.entries[editingSpend], ...rec, note: undefined };
+  else spend.entries.push(rec);
+  dlgSpend.close(); saveSpend(`支出${editingSpend!==null?"編集":"記録"}: ¥${amount}`);
+};
+function openBudget() {
+  $("bMonthly").value = (spend.budget && spend.budget.monthly) || 35000;
+  dlgBudget.showModal();
+}
+$("btnSaveBudget").onclick = () => {
+  const v = +$("bMonthly").value;
+  if (!v) { alert("予算を入れてください"); return; }
+  spend.budget = { ...(spend.budget||{}), monthly: v };
+  dlgBudget.close(); saveSpend(`予算変更: 月${v}円`);
+};
 async function renderRecipes() {
   await ensureRecipesLoaded();
   const mains = (recipesData.candidates || []).filter(r => r.category !== "side" && r.status !== "cooked");
@@ -352,6 +473,7 @@ async function uploadReceipt(file) {
 $("fCam").onchange = e => { if (e.target.files[0]) uploadReceipt(e.target.files[0]); e.target.value = ""; };
 $("btnAdd").onclick = () => {
   if (tab === "receipts") { $("fCam").click(); return; }
+  if (tab === "spending") { openSpend(); return; }
   editing = null; $("dlgItemTitle").textContent = "追加"; ["fName","fQty","fPrice","fExpiry"].forEach(id=>$(id).value=""); $("fSection").value = tab; dlgItem.showModal(); };
 $("btnSaveItem").onclick = () => {
   const name = $("fName").value.trim(); if (!name) return;
